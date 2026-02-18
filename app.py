@@ -129,4 +129,55 @@ if st.button("🔍 Analizar Libro", type="primary"):
 
 # --- 5. FORMULARIO DE REVISIÓN Y GUARDADO ---
 
-if st.session_
+if st.session_state.datos:
+    d = st.session_state.datos
+    st.divider()
+    st.subheader("📝 Ficha del Libro (Revisar antes de subir)")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        f_autor = st.text_input("Autor (Apellido, Nombre)", value=limpiar_dato(d.get("Autor")))
+        f_titulo = st.text_input("Título", value=limpiar_dato(d.get("Titulo")))
+        f_tem = st.text_input("Temática", value=limpiar_dato(d.get("Tematica")))
+        f_cat = st.text_input("Categorías (CDU)", value=limpiar_dato(d.get("Categorias")))
+        f_edi = st.text_input("Editorial", value=limpiar_dato(d.get("Editorial")))
+        f_col = st.text_input("Colección", value=limpiar_dato(d.get("Coleccion")))
+        f_pob = st.text_input("Población", value=limpiar_dato(d.get("Poblacion")))
+        f_año = st.text_input("Año", value=limpiar_dato(d.get("Año")))
+
+    with col2:
+        f_pri = st.text_input("Primera edición", value=limpiar_dato(d.get("Primera_Edicion")))
+        f_isbn = st.text_input("ISBN", value=limpiar_dato(d.get("ISBN")))
+        f_pag = st.text_input("Páginas", value=limpiar_dato(d.get("Paginas")))
+        f_med = st.text_input("Medidas", value=limpiar_dato(d.get("Medidas")))
+        f_pes = st.text_input("Peso", value=limpiar_dato(d.get("Peso")))
+        f_enc = st.text_input("Encuadernación", value=limpiar_dato(d.get("Encuadernacion")))
+        f_pre = st.text_input("Precio (€)", value=limpiar_dato(d.get("Precio")))
+        f_obs = st.text_area("Observaciones", value=limpiar_dato(d.get("Observaciones")))
+
+    if st.button("💾 Guardar en Google Sheets", use_container_width=True, type="primary"):
+        try:
+            with st.spinner("Conectando con Google Sheets..."):
+                gc = conectar_google_sheets()
+                hoja = gc.open(EXCEL_NAME).worksheet(SHEET_NAME)
+                
+                # Se calcula el ID basado en la última fila
+                nuevo_id = len(hoja.get_all_values())
+                
+                fila = [
+                    nuevo_id, f_autor, f_titulo, f_tem, f_cat,
+                    f_edi, f_col, f_pob, f_año, f_pri, f_isbn, f_pag,
+                    f_med, f_pes, f_enc, f_obs, f_pre
+                ]
+                
+                hoja.append_row(fila)
+                st.balloons()
+                st.success(f"✅ Guardado con éxito (ID: {nuevo_id})")
+                st.session_state.datos = None # Limpiar para el siguiente libro
+        except Exception as e:
+            st.error(f"Error al guardar: {e}")
+
+if st.button("♻️ Nueva Captura"):
+    st.session_state.datos = None
+    st.rerun()
