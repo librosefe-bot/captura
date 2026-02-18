@@ -12,7 +12,7 @@ import io
 if "API_KEY" in st.secrets:
     API_KEY = st.secrets["API_KEY"]
 else:
-    API_KEY = "TU_API_KEY_AQUI" 
+    API_KEY = "AIzaSyBILmrsJrf4DFJNmw3WSNFByCc4SZ4v8ho" 
 
 EXCEL_NAME = "Inventario_Libros" 
 SHEET_NAME = "para_subir" 
@@ -147,3 +147,4 @@ if st.session_state.datos:
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
+
