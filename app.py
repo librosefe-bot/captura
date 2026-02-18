@@ -12,82 +12,90 @@ import io
 if "API_KEY" in st.secrets:
     API_KEY = st.secrets["API_KEY"]
 else:
-    API_KEY = "AIzaSyBILmrsJrf4DFJNmw3WSNFByCc4SZ4v8ho" 
+    API_KEY = "TU_API_KEY_AQUI" 
 
 EXCEL_NAME = "Inventario_Libros" 
 SHEET_NAME = "para_subir" 
 
-st.set_page_config(page_title="Catalogador Pro", layout="wide")
+st.set_page_config(page_title="Catalogador Multi-Foto", layout="wide")
 
-# Inicializar estados si no existen
+# Inicializamos el almacén de datos para que no se pierdan al recargar
 if 'datos' not in st.session_state: st.session_state.datos = None
-if 'fotos_procesadas' not in st.session_state: st.session_state.fotos_procesadas = []
+if 'fotos_subidas' not in st.session_state: st.session_state.fotos_subidas = []
 
 def limpiar_dato(dato):
     if isinstance(dato, list): return ", ".join(map(str, dato))
     d = str(dato) if dato and str(dato).lower() != "nan" and dato != "---" else ""
     return d.replace("[", "").replace("]", "").strip()
 
-# --- 2. LÓGICA DE IA ---
+# --- 2. FUNCIÓN IA PARA VARIAS FOTOS ---
 
-def analizar_imagenes_ia(imagenes_bytes):
-    # Usamos la versión estable de la URL que ya probamos
+def analizar_varias_imagenes(lista_fotos):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
     headers = {'Content-Type': 'application/json'}
     
     prompt_texto = """
-    Analiza las fotos y devuelve exclusivamente un JSON. 
-    Campos: Autor (APELLIDO, Nombre), Titulo, Tematica, Categorias (Texto CDU sin numeros), 
-    Editorial, Coleccion, Poblacion, Año, Primera_Edicion, ISBN, Paginas, 
-    Medidas, Peso, Encuadernacion, Observaciones, Precio.
+    Analiza todas las fotos adjuntas de este libro y extrae la información para un catálogo bibliográfico.
+    Devuelve exclusivamente un JSON con: Autor (APELLIDO, Nombre), Titulo, Tematica, 
+    Categorias (Solo texto CDU), Editorial, Coleccion, Poblacion, Año, Primera_Edicion, 
+    ISBN, Paginas, Medidas, Peso, Encuadernacion, Observaciones, Precio.
+    Si un dato no es visible, pon '---'.
     """
 
     parts = [{"text": prompt_texto}]
-    for img_bytes in imagenes_bytes:
+    
+    for foto in lista_fotos:
+        # Convertimos cada foto a base64
+        img_base64 = base64.b64encode(foto.getvalue()).decode('utf-8')
         parts.append({
             "inline_data": {
                 "mime_type": "image/jpeg",
-                "data": base64.b64encode(img_bytes).decode('utf-8')
+                "data": img_base64
             }
         })
 
     payload = {"contents": [{"parts": parts}]}
     
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        r = requests.post(url, headers=headers, json=payload, timeout=40)
         res = r.json()
         txt = res['candidates'][0]['content']['parts'][0]['text']
         match = re.search(r'\{.*\}', txt, re.DOTALL)
         return json.loads(match.group(0)) if match else None
-    except: return None
+    except Exception as e:
+        st.error(f"Error de la IA: {e}")
+        return None
 
 # --- 3. INTERFAZ ---
 
-st.title("📚 Escáner de Libros")
+st.title("📚 Catalogador Inteligente")
+st.write("Puedes tomar varias fotos (portada, contraportada, página de derechos).")
 
-# Agregamos 'label_visibility' para que sea más limpio en móvil
-# El parámetro 'key' ayuda a Streamlit a no perder el estado al capturar
-fotos = st.file_uploader("📷 Toca para abrir cámara o subir", 
-                         type=['jpg', 'jpeg', 'png'], 
-                         accept_multiple_files=True,
-                         key="camara_input")
+# Widget que permite múltiples archivos
+fotos_nuevas = st.file_uploader("📷 Capturar o seleccionar imágenes", 
+                               type=['jpg', 'jpeg', 'png'], 
+                               accept_multiple_files=True,
+                               key="uploader")
 
-if fotos:
-    # Mostramos una vista previa pequeña para confirmar que la foto está "ahí"
-    st.write(f"✅ {len(fotos)} imagen(es) lista(s) para procesar.")
+if fotos_nuevas:
+    st.session_state.fotos_subidas = fotos_nuevas
     
-    if st.button("🔍 Extraer Datos del Libro", type="primary"):
-        with st.spinner("Leyendo las fotos..."):
-            # Convertimos las fotos a bytes
-            imgs_bytes = [f.read() for f in fotos]
-            resultado = analizar_imagenes_ia(imgs_bytes)
+    # Mostrar miniaturas de las fotos capturadas
+    cols = st.columns(len(fotos_nuevas))
+    for i, foto in enumerate(fotos_nuevas):
+        with cols[i]:
+            st.image(foto, width=150)
+            # Opción para que el usuario guarde la foto en su dispositivo si quiere
+            st.download_button("💾 Guardar", data=foto.getvalue(), file_name=f"libro_foto_{i}.jpg", mime="image/jpeg")
+
+    if st.button("🔍 Analizar todas las fotos", type="primary", use_container_width=True):
+        with st.spinner("La IA está procesando todas las imágenes..."):
+            resultado = analizar_varias_imagenes(st.session_state.fotos_subidas)
             if resultado:
                 st.session_state.datos = resultado
-                st.success("¡Datos extraídos con éxito!")
-            else:
-                st.error("La IA no pudo leer la imagen. Intenta con más luz.")
+                st.success("¡Datos extraídos!")
 
-# --- 4. FORMULARIO Y GUARDADO ---
+# --- 4. FORMULARIO DE EDICIÓN ---
 
 if st.session_state.datos:
     d = st.session_state.datos
@@ -113,9 +121,8 @@ if st.session_state.datos:
         f_pre = st.text_input("Precio (€)", value=limpiar_dato(d.get("Precio")))
         f_obs = st.text_area("Observaciones", value=limpiar_dato(d.get("Observaciones")))
 
-    if st.button("💾 Guardar en Google Sheets", use_container_width=True):
+    if st.button("✅ Subir a Google Sheets", use_container_width=True, type="primary"):
         try:
-            # Conexión simplificada (asumiendo que los Secrets ya están puestos)
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             if "gcp_service_account" in st.secrets:
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(st.secrets["gcp_service_account"]), scope)
@@ -133,8 +140,14 @@ if st.session_state.datos:
             
             hoja.append_row(fila)
             st.balloons()
-            st.success("¡Guardado!")
+            st.success("¡Datos guardados en la hoja!")
+            # Limpiar todo para el siguiente libro
             st.session_state.datos = None
-            st.rerun()
+            st.session_state.fotos_subidas = []
         except Exception as e:
-            st.error(f"Error al guardar: {e}")
+            st.error(f"Error: {e}")
+
+if st.button("♻️ Limpiar y Nueva Captura"):
+    st.session_state.datos = None
+    st.session_state.fotos_subidas = []
+    st.rerun()
