@@ -5,6 +5,8 @@ import json
 import requests
 import base64
 import re
+from PIL import Image
+import io
 
 # --- 1. CONFIGURACIÓN ---
 if "API_KEY" in st.secrets:
@@ -15,74 +17,87 @@ else:
 EXCEL_NAME = "Inventario_Libros" 
 SHEET_NAME = "para_subir" 
 
-st.set_page_config(page_title="Catalogador Total", layout="wide")
+st.set_page_config(page_title="Catalogador Pro", layout="wide")
 
-# Inicializar estados de sesión
 if 'datos' not in st.session_state: st.session_state.datos = None
-if 'archivo_ids' not in st.session_state: st.session_state.archivo_ids = []
 
 def limpiar_dato(dato):
     if isinstance(dato, list): return ", ".join(map(str, dato))
     d = str(dato) if dato and str(dato).lower() != "nan" and dato != "---" else ""
     return d.replace("[", "").replace("]", "").strip()
 
-# --- 2. FUNCIÓN IA MULTI-IMAGEN ---
+# --- 2. FUNCIÓN IA MEJORADA ---
 
 def analizar_imagenes_lote(lista_archivos):
+    # Usamos la URL v1beta que es la más compatible con visión actualmente
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
     headers = {'Content-Type': 'application/json'}
     
     prompt_texto = """
-    Analiza estas imágenes de un libro. Extrae: Autor (APELLIDO, Nombre), Titulo, Tematica, 
-    Categorias (Solo texto CDU), Editorial, Coleccion, Poblacion, Año, Primera_Edicion, 
-    ISBN, Paginas, Medidas, Peso, Encuadernacion, Observaciones, Precio.
-    Devuelve estrictamente un JSON. Si falta un dato usa '---'.
+    Analiza estas imágenes de un libro. Extrae la información y devuélvela estrictamente en un objeto JSON:
+    Campos: Autor (APELLIDO, Nombre), Titulo, Tematica, Categorias (Texto CDU sin numeros), 
+    Editorial, Coleccion, Poblacion, Año, Primera_Edicion, ISBN, Paginas, 
+    Medidas, Peso, Encuadernacion, Observaciones, Precio.
+    Si no ves un dato, pon '---'. No escribas nada más que el JSON.
     """
 
     parts = [{"text": prompt_texto}]
-    for archivo in lista_archivos:
-        img_base64 = base64.b64encode(archivo.read()).decode('utf-8')
-        parts.append({
-            "inline_data": {"mime_type": "image/jpeg", "data": img_base64}
-        })
-        archivo.seek(0) # Resetear puntero para poder volver a leerlo si hace falta
-
-    payload = {"contents": [{"parts": parts}]}
     
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=40)
+        for archivo in lista_archivos:
+            # IMPORTANTE: Volver al inicio del archivo antes de leerlo
+            archivo.seek(0)
+            img_bytes = archivo.read()
+            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+            
+            parts.append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": img_base64
+                }
+            })
+            # Resetear de nuevo para que Streamlit pueda mostrar la miniatura después
+            archivo.seek(0)
+
+        payload = {"contents": [{"parts": parts}]}
+        r = requests.post(url, headers=headers, json=payload, timeout=45)
         res = r.json()
-        txt = res['candidates'][0]['content']['parts'][0]['text']
-        match = re.search(r'\{.*\}', txt, re.DOTALL)
-        return json.loads(match.group(0)) if match else None
+
+        if 'candidates' in res and res['candidates']:
+            txt = res['candidates'][0]['content']['parts'][0]['text']
+            match = re.search(r'\{.*\}', txt, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+        else:
+            # Si hay error de seguridad o bloqueo de contenido, aparecerá aquí
+            st.error(f"La IA no generó respuesta. Motivo: {res.get('promptFeedback', 'Desconocido')}")
+            return None
+
     except Exception as e:
-        st.error(f"Error IA: {e}")
+        st.error(f"Error técnico: {e}")
         return None
 
 # --- 3. INTERFAZ ---
 
-st.title("📚 Catalogador Profesional")
-st.write("Selecciona fotos de tu **galería** o usa la **cámara**.")
+st.title("📚 Escáner Profesional de Libros")
+st.write("Sube imágenes de la galería o usa la cámara.")
 
-# El componente detecta automáticamente si es móvil para ofrecer Galería/Archivos o Cámara
 archivos_cargados = st.file_uploader(
-    "Selecciona una o varias imágenes (Fotos ya guardadas o Cámara)", 
+    "Selecciona fotos (Portada, lomo, página de créditos...)", 
     type=['jpg', 'jpeg', 'png'], 
     accept_multiple_files=True,
     key="multi_uploader"
 )
 
 if archivos_cargados:
-    st.subheader(f"📸 Imágenes preparadas: {len(archivos_cargados)}")
-    
-    # Mostrar miniaturas para confirmar qué se ha subido
+    # Mostrar miniaturas
     cols = st.columns(min(len(archivos_cargados), 4))
     for i, archivo in enumerate(archivos_cargados):
         with cols[i % 4]:
             st.image(archivo, use_container_width=True)
 
-    if st.button("🔍 Procesar Imágenes con IA", type="primary", use_container_width=True):
-        with st.spinner("Analizando información..."):
+    if st.button("🔍 Extraer Información con IA", type="primary", use_container_width=True):
+        with st.spinner("La IA está leyendo los libros..."):
             resultado = analizar_imagenes_lote(archivos_cargados)
             if resultado:
                 st.session_state.datos = resultado
@@ -93,9 +108,10 @@ if archivos_cargados:
 if st.session_state.datos:
     d = st.session_state.datos
     st.divider()
-    with st.form("ficha_libro"):
-        col1, col2 = st.columns(2)
-        with col1:
+    
+    with st.form("ficha_revision"):
+        c1, c2 = st.columns(2)
+        with c1:
             f_autor = st.text_input("Autor", value=limpiar_dato(d.get("Autor")))
             f_titulo = st.text_input("Título", value=limpiar_dato(d.get("Titulo")))
             f_tem = st.text_input("Temática", value=limpiar_dato(d.get("Tematica")))
@@ -104,7 +120,7 @@ if st.session_state.datos:
             f_col = st.text_input("Colección", value=limpiar_dato(d.get("Coleccion")))
             f_pob = st.text_input("Población", value=limpiar_dato(d.get("Poblacion")))
             f_año = st.text_input("Año", value=limpiar_dato(d.get("Año")))
-        with col2:
+        with c2:
             f_pri = st.text_input("Primera edición", value=limpiar_dato(d.get("Primera_Edicion")))
             f_isbn = st.text_input("ISBN", value=limpiar_dato(d.get("ISBN")))
             f_pag = st.text_input("Páginas", value=limpiar_dato(d.get("Paginas")))
@@ -114,9 +130,9 @@ if st.session_state.datos:
             f_pre = st.text_input("Precio (€)", value=limpiar_dato(d.get("Precio")))
             f_obs = st.text_area("Observaciones", value=limpiar_dato(d.get("Observaciones")))
         
-        guardar = st.form_submit_button("💾 Guardar en Google Sheets", use_container_width=True)
+        btn_guardar = st.form_submit_button("💾 Guardar Libro en Google Sheets", use_container_width=True)
 
-    if guardar:
+    if btn_guardar:
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             if "gcp_service_account" in st.secrets:
@@ -134,11 +150,11 @@ if st.session_state.datos:
             ]
             hoja.append_row(fila)
             st.balloons()
-            st.success("✅ ¡Libro registrado con éxito!")
+            st.success("¡Libro guardado!")
             st.session_state.datos = None
         except Exception as e:
-            st.error(f"Error al guardar: {e}")
+            st.error(f"Error al conectar con Sheets: {e}")
 
-if st.button("♻️ Reiniciar Todo"):
+if st.button("♻️ Reiniciar"):
     st.session_state.datos = None
     st.rerun()
